@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>成都景点分布地图 - Redis GEO 原型系统</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script>
+        window._AMapSecurityConfig = {
+            securityJsCode: "{{ amap_security_code }}"
+        };
+    </script>
+    <script src="https://webapi.amap.com/maps?v=2.0&key={{ amap_key }}"></script>
+</head>
+<body>
+    <div class="app-shell">
+        <header class="page-header">
+            <div>
+                <p class="eyebrow">Redis GEO 原型系统</p>
+                <h1>成都景点分布地图</h1>
+            </div>
+            <div class="header-actions">
+                <button id="openAuthModalBtn" type="button" class="auth-entry-btn">
+                    <span id="authEntryText">登录 / 注册</span>
+                </button>
+                <button id="logoutBtn" type="button" class="logout-btn hidden">退出</button>
+            </div>
+        </header>
+
+        <main class="main-layout">
+            <section class="map-panel" aria-label="成都景点地图">
+                <div id="map"></div>
+                <div id="mapStatus" class="map-status">地图加载中...</div>
+            </section>
+
+            <aside class="landmark-panel" aria-label="景点列表">
+                <section class="toolbox" aria-label="地图交互工具">
+                    <div class="tool-card">
+                        <div class="tool-title">
+                            <h2>交互工具</h2>
+                            <button id="resetViewBtn" type="button" class="ghost-btn">重置</button>
+                        </div>
+
+                        <label class="field-label" for="categoryFilter">分类筛选</label>
+                        <select id="categoryFilter">
+                            <option value="">全部分类</option>
+                        </select>
+
+                        <label class="field-label keyword-label" for="keywordSearch">关键词搜索</label>
+                        <input id="keywordSearch" type="search" placeholder="按名称、分类、地址搜索">
+
+                        <div class="data-actions" aria-label="数据导入导出">
+                            <button id="exportJsonBtn" type="button" class="secondary-btn">导出 JSON</button>
+                            <button id="importJsonBtn" type="button" class="import-file-btn">导入 JSON</button>
+                            <input id="importJsonInput" class="hidden-file-input" type="file" accept="application/json,.json">
+                        </div>
+
+                        <button id="resetSeedBtn" type="button" class="danger-btn">恢复示例数据</button>
+                    </div>
+
+                    <form id="nearbyForm" class="tool-card">
+                        <h3>附近搜索</h3>
+                        <div class="form-grid two-columns">
+                            <label>
+                                经度
+                                <input id="nearbyLongitude" name="longitude" type="number" step="0.000001" value="104.06476" required>
+                            </label>
+                            <label>
+                                纬度
+                                <input id="nearbyLatitude" name="latitude" type="number" step="0.000001" value="30.57020" required>
+                            </label>
+                            <label>
+                                半径
+                                <input id="nearbyRadius" name="radius" type="number" min="0.1" step="0.1" value="5" required>
+                            </label>
+                            <label>
+                                单位
+                                <select id="nearbyUnit" name="unit">
+                                    <option value="km">km</option>
+                                    <option value="m">m</option>
+                                    <option value="mi">mi</option>
+                                    <option value="ft">ft</option>
+                                </select>
+                            </label>
+                        </div>
+                        <button type="submit" class="primary-btn">搜索附近景点</button>
+                    </form>
+
+                    <form id="distanceForm" class="tool-card">
+                        <h3>两点距离</h3>
+                        <div class="form-grid">
+                            <label>
+                                起点
+                                <select id="distanceFrom" name="from" required></select>
+                            </label>
+                            <label>
+                                终点
+                                <select id="distanceTo" name="to" required></select>
+                            </label>
+                            <label>
+                                单位
+                                <select id="distanceUnit" name="unit">
+                                    <option value="km">km</option>
+                                    <option value="m">m</option>
+                                    <option value="mi">mi</option>
+                                    <option value="ft">ft</option>
+                                </select>
+                            </label>
+                        </div>
+                        <button type="submit" class="primary-btn">计算距离</button>
+                        <div id="distanceResult" class="result-box">请选择两个地标计算距离</div>
+                    </form>
+
+                    <details id="landmarkFormCard" class="tool-card add-card">
+                        <summary id="landmarkFormTitle">新增地标</summary>
+                        <form id="addLandmarkForm" class="add-form">
+                            <label>
+                                ID
+                                <input id="landmarkIdInput" name="id" type="text" placeholder="例如：my_landmark" required>
+                            </label>
+                            <label>
+                                名称
+                                <input name="name" type="text" placeholder="地标名称" required>
+                            </label>
+                            <div class="form-grid two-columns">
+                                <label>
+                                    经度
+                                    <input name="longitude" type="number" step="0.000001" required>
+                                </label>
+                                <label>
+                                    纬度
+                                    <input name="latitude" type="number" step="0.000001" required>
+                                </label>
+                            </div>
+                            <label>
+                                分类
+                                <input name="category" type="text" placeholder="未分类">
+                            </label>
+                            <label>
+                                地址
+                                <input name="address" type="text" placeholder="地标地址">
+                            </label>
+                            <label>
+                                描述
+                                <textarea name="description" rows="3" placeholder="地标描述"></textarea>
+                            </label>
+                            <div class="form-actions">
+                                <button id="saveLandmarkBtn" type="submit" class="primary-btn">保存地标</button>
+                                <button id="cancelEditBtn" type="button" class="ghost-btn hidden">取消编辑</button>
+                            </div>
+                        </form>
+                    </details>
+                </section>
+
+                <div class="panel-title">
+                    <h2>景点列表</h2>
+                    <span id="landmarkCount">0 个</span>
+                </div>
+                <div id="landmarkList" class="landmark-list">
+                    <div class="empty-tip">正在读取景点数据...</div>
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <div id="authModal" class="modal-backdrop hidden" aria-hidden="true">
+        <div class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="authModalTitle">
+            <div class="modal-header">
+                <div>
+                    <p class="modal-eyebrow">Account</p>
+                    <h2 id="authModalTitle">用户中心</h2>
+                </div>
+                <button id="closeAuthModalBtn" type="button" class="modal-close-btn" aria-label="关闭登录注册弹窗">×</button>
+            </div>
+
+            <div class="auth-tabs" role="tablist" aria-label="登录注册切换">
+                <button id="loginTabBtn" type="button" class="auth-tab active" role="tab" aria-selected="true">登录</button>
+                <button id="registerTabBtn" type="button" class="auth-tab" role="tab" aria-selected="false">注册</button>
+            </div>
+
+            <form id="loginForm" class="auth-form">
+                <label>
+                    用户名
+                    <input name="username" type="text" placeholder="请输入用户名" required>
+                </label>
+                <label>
+                    密码
+                    <input name="password" type="password" placeholder="请输入密码" required>
+                </label>
+                <p class="auth-placeholder">登录后将用于后续用户私有地标管理。</p>
+                <button type="submit" class="primary-btn">登录</button>
+            </form>
+
+            <form id="registerForm" class="auth-form hidden">
+                <label>
+                    用户名
+                    <input name="username" type="text" placeholder="例如：test_user" required>
+                </label>
+                <label>
+                    密码
+                    <input name="password" type="password" placeholder="至少 6 位" required>
+                </label>
+                <label>
+                    昵称
+                    <input name="nickname" type="text" placeholder="默认等于用户名">
+                </label>
+                <label>
+                    邮箱
+                    <input name="email" type="email" placeholder="test@example.com">
+                </label>
+                <button type="submit" class="primary-btn">注册用户</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+    <script src="{{ url_for('static', filename='js/map.js') }}"></script>
+</body>
+</html>
