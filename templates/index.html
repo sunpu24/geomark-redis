@@ -132,6 +132,34 @@
                         <div id="distanceResult" class="result-box">请选择两个地标计算距离</div>
                     </form>
 
+                    <form id="routeForm" class="tool-card route-card">
+                        <h3>路线规划</h3>
+                        <div class="form-grid">
+                            <label>
+                                起点
+                                <select id="routeFrom" name="from" required></select>
+                            </label>
+                            <label>
+                                终点
+                                <select id="routeTo" name="to" required></select>
+                            </label>
+                            <label>
+                                出行方式
+                                <select id="routeMode" name="mode">
+                                    <option value="driving">驾车</option>
+                                    <option value="walking">步行</option>
+                                    <option value="riding">骑行</option>
+                                    <option value="transfer">公共交通</option>
+                                </select>
+                            </label>
+                        </div>
+                        <div class="form-actions route-actions">
+                            <button type="submit" class="primary-btn">规划路线</button>
+                            <button id="clearRouteBtn" type="button" class="ghost-btn">清除</button>
+                        </div>
+                        <div id="routeResult" class="result-box route-result">请选择起点和终点规划路线</div>
+                    </form>
+
                     <details id="landmarkFormCard" class="tool-card add-card">
                         <summary id="landmarkFormTitle">新增地标</summary>
                         <form id="addLandmarkForm" class="add-form">

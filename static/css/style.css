@@ -415,6 +415,19 @@ h1 {
     line-height: 1.6;
 }
 
+.route-card {
+    border-color: #bfdbfe;
+    background: linear-gradient(180deg, #ffffff, #f8fbff);
+}
+
+.route-actions {
+    margin-top: 2px;
+}
+
+.route-result strong {
+    color: #0f172a;
+}
+
 .add-card summary {
     color: #0f172a;
     cursor: pointer;

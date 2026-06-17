@@ -5,6 +5,11 @@ let map;
 let infoWindow;
 let searchCenterMarker;
 let searchCircle;
+let drivingPlanner;
+let walkingPlanner;
+let ridingPlanner;
+let transferPlanner;
+let activeRoutePlanner;
 
 let allLandmarks = [];
 let visibleLandmarks = [];
@@ -43,6 +48,12 @@ const distanceForm = document.getElementById("distanceForm");
 const distanceFrom = document.getElementById("distanceFrom");
 const distanceTo = document.getElementById("distanceTo");
 const distanceResult = document.getElementById("distanceResult");
+const routeForm = document.getElementById("routeForm");
+const routeFrom = document.getElementById("routeFrom");
+const routeTo = document.getElementById("routeTo");
+const routeMode = document.getElementById("routeMode");
+const clearRouteBtn = document.getElementById("clearRouteBtn");
+const routeResult = document.getElementById("routeResult");
 const addLandmarkForm = document.getElementById("addLandmarkForm");
 const landmarkFormCard = document.getElementById("landmarkFormCard");
 const landmarkFormTitle = document.getElementById("landmarkFormTitle");
@@ -248,6 +259,22 @@ function clearSearchOverlay() {
     }
 }
 
+function clearRouteOverlay() {
+    if (drivingPlanner) {
+        drivingPlanner.clear();
+    }
+    if (walkingPlanner) {
+        walkingPlanner.clear();
+    }
+    if (ridingPlanner) {
+        ridingPlanner.clear();
+    }
+    if (transferPlanner) {
+        transferPlanner.clear();
+    }
+    activeRoutePlanner = null;
+}
+
 function clearMarkers() {
     markerMap.forEach((marker) => map.remove(marker));
     markerMap.clear();
@@ -397,10 +424,103 @@ function populateDistanceSelects() {
 
     distanceFrom.innerHTML = options;
     distanceTo.innerHTML = options;
+    routeFrom.innerHTML = options;
+    routeTo.innerHTML = options;
 
     if (allLandmarks.length > 1) {
         distanceTo.selectedIndex = 1;
+        routeTo.selectedIndex = 1;
     }
+}
+
+function getRoutePlanner(mode) {
+    if (mode === "walking") {
+        if (!walkingPlanner) {
+            walkingPlanner = new AMap.Walking({ map });
+        }
+        return walkingPlanner;
+    }
+
+    if (mode === "riding") {
+        if (!ridingPlanner) {
+            ridingPlanner = new AMap.Riding({ map });
+        }
+        return ridingPlanner;
+    }
+
+    if (mode === "transfer") {
+        if (!transferPlanner) {
+            transferPlanner = new AMap.Transfer({
+                map,
+                city: "成都市",
+            });
+        }
+        return transferPlanner;
+    }
+
+    if (!drivingPlanner) {
+        drivingPlanner = new AMap.Driving({ map });
+    }
+    return drivingPlanner;
+}
+
+function formatRouteDuration(seconds) {
+    const totalSeconds = Number(seconds);
+    if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+        return "--";
+    }
+
+    const minutes = Math.round(totalSeconds / 60);
+    if (minutes < 60) {
+        return `${minutes} 分钟`;
+    }
+
+    const hours = Math.floor(minutes / 60);
+    const remainMinutes = minutes % 60;
+    return remainMinutes ? `${hours} 小时 ${remainMinutes} 分钟` : `${hours} 小时`;
+}
+
+function formatRouteDistance(meters) {
+    const distance = Number(meters);
+    if (!Number.isFinite(distance) || distance < 0) {
+        return "--";
+    }
+    if (distance >= 1000) {
+        return `${(distance / 1000).toFixed(2)} km`;
+    }
+    return `${Math.round(distance)} m`;
+}
+
+function summarizeRoute(result) {
+    const route = result?.routes?.[0] || result?.plans?.[0];
+    if (!route) {
+        return null;
+    }
+
+    return {
+        distance: formatRouteDistance(route.distance),
+        duration: formatRouteDuration(route.time || route.duration),
+    };
+}
+
+function getRouteModeText(mode) {
+    const modeTextMap = {
+        driving: "驾车",
+        walking: "步行",
+        riding: "骑行",
+        transfer: "公共交通",
+    };
+    return modeTextMap[mode] || "驾车";
+}
+
+function getRoutePluginName(mode) {
+    const pluginMap = {
+        driving: "AMap.Driving",
+        walking: "AMap.Walking",
+        riding: "AMap.Riding",
+        transfer: "AMap.Transfer",
+    };
+    return pluginMap[mode] || "AMap.Driving";
 }
 
 function fitLandmarks(landmarks) {
@@ -414,6 +534,8 @@ function fitLandmarks(landmarks) {
 
 function applyListFilters() {
     clearSearchOverlay();
+    clearRouteOverlay();
+    routeResult.textContent = "请选择起点和终点规划路线";
     highlightedIds = new Set();
     selectedLandmarkId = "";
 
@@ -767,6 +889,8 @@ async function handleNearbySubmit(event) {
     }
 
     setStatus("正在执行附近搜索...");
+    clearRouteOverlay();
+    routeResult.textContent = "请选择起点和终点规划路线";
     const params = new URLSearchParams({ longitude, latitude, radius, unit });
     const response = await fetch(`/api/landmarks/nearby?${params.toString()}`);
     const result = await response.json();
@@ -823,6 +947,70 @@ async function handleDistanceSubmit(event) {
     fitLandmarks(visibleLandmarks);
     setStatus(`距离计算完成：${fromName} 到 ${toName} 为 ${result.distance} ${result.unit}`);
     showToast("距离计算完成", "success");
+}
+
+async function handleRouteSubmit(event) {
+    event.preventDefault();
+
+    const formData = new FormData(routeForm);
+    const fromId = formData.get("from");
+    const toId = formData.get("to");
+    const mode = formData.get("mode") || "driving";
+
+    if (!fromId || !toId) {
+        routeResult.textContent = "请选择起点和终点";
+        return;
+    }
+    if (fromId === toId) {
+        routeResult.textContent = "起点和终点不能相同";
+        return;
+    }
+
+    const fromLandmark = allLandmarks.find((landmark) => landmark.id === fromId);
+    const toLandmark = allLandmarks.find((landmark) => landmark.id === toId);
+    const fromPosition = getLandmarkPosition(fromLandmark || {});
+    const toPosition = getLandmarkPosition(toLandmark || {});
+
+    if (!fromLandmark || !toLandmark || !fromPosition || !toPosition) {
+        throw new Error("起点或终点地标坐标无效，无法规划路线");
+    }
+
+    clearSearchOverlay();
+    clearRouteOverlay();
+    highlightedIds = new Set([fromId, toId]);
+    selectedLandmarkId = fromId;
+    visibleLandmarks = allLandmarks.filter((landmark) => highlightedIds.has(landmark.id));
+    renderMarkers(visibleLandmarks);
+    renderLandmarkList(visibleLandmarks);
+
+    const modeText = getRouteModeText(mode);
+    routeResult.textContent = `正在规划${modeText}路线...`;
+    setStatus(`正在规划${modeText}路线：${fromLandmark.name} → ${toLandmark.name}`);
+
+    await new Promise((resolve, reject) => {
+        AMap.plugin([getRoutePluginName(mode)], () => {
+            try {
+                const planner = getRoutePlanner(mode);
+                activeRoutePlanner = planner;
+                planner.search(fromPosition, toPosition, (status, result) => {
+                    if (status !== "complete") {
+                        reject(new Error(result?.info || `${modeText}路线规划失败`));
+                        return;
+                    }
+
+                    const summary = summarizeRoute(result);
+                    routeResult.innerHTML = summary
+                        ? `<strong>${escapeHtml(fromLandmark.name)} → ${escapeHtml(toLandmark.name)}</strong><br>方式：${modeText}<br>路程：${summary.distance}<br>预计耗时：${summary.duration}`
+                        : `${modeText}路线规划完成，但未返回距离和耗时信息`;
+                    setStatus(`${modeText}路线规划完成：${fromLandmark.name} → ${toLandmark.name}`);
+                    showToast(`${modeText}路线规划完成`, "success");
+                    resolve(result);
+                });
+            } catch (error) {
+                reject(error);
+            }
+        });
+    });
 }
 
 async function handleRegisterSubmit(event) {
@@ -1025,10 +1213,12 @@ function bindEvents() {
         categoryFilter.value = "";
         keywordSearch.value = "";
         distanceResult.textContent = "请选择两个地标计算距离";
+        routeResult.textContent = "请选择起点和终点规划路线";
         visibleLandmarks = [...allLandmarks];
         highlightedIds = new Set();
         selectedLandmarkId = "";
         clearSearchOverlay();
+        clearRouteOverlay();
         renderMarkers(visibleLandmarks);
         renderLandmarkList(visibleLandmarks);
         fitLandmarks(visibleLandmarks);
@@ -1123,6 +1313,22 @@ function bindEvents() {
             setStatus(error.message);
             showToast(error.message, "error");
         });
+    });
+
+    routeForm.addEventListener("submit", (event) => {
+        handleRouteSubmit(event).catch((error) => {
+            console.error(error);
+            routeResult.textContent = error.message;
+            setStatus(error.message);
+            showToast(error.message, "error");
+        });
+    });
+
+    clearRouteBtn.addEventListener("click", () => {
+        clearRouteOverlay();
+        routeResult.textContent = "请选择起点和终点规划路线";
+        setStatus("已清除路线规划结果");
+        showToast("路线已清除", "info");
     });
 
     loginForm.addEventListener("submit", (event) => {
