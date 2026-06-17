@@ -11,6 +11,8 @@ let visibleLandmarks = [];
 let selectedLandmarkId = "";
 let editingLandmarkId = "";
 let highlightedIds = new Set();
+let favoriteIds = new Set();
+let showingFavoritesOnly = false;
 let toastTimer;
 let currentUser = null;
 
@@ -21,6 +23,7 @@ const landmarkList = document.getElementById("landmarkList");
 const landmarkCount = document.getElementById("landmarkCount");
 const resetViewBtn = document.getElementById("resetViewBtn");
 const resetSeedBtn = document.getElementById("resetSeedBtn");
+const favoriteFilterBtn = document.getElementById("favoriteFilterBtn");
 const exportJsonBtn = document.getElementById("exportJsonBtn");
 const importJsonBtn = document.getElementById("importJsonBtn");
 const importJsonInput = document.getElementById("importJsonInput");
@@ -47,6 +50,10 @@ const landmarkIdInput = document.getElementById("landmarkIdInput");
 const saveLandmarkBtn = document.getElementById("saveLandmarkBtn");
 const cancelEditBtn = document.getElementById("cancelEditBtn");
 const toast = document.getElementById("toast");
+const statLandmarkCount = document.getElementById("statLandmarkCount");
+const statCategoryCount = document.getElementById("statCategoryCount");
+const statUserCount = document.getElementById("statUserCount");
+const statRedisStatus = document.getElementById("statRedisStatus");
 
 function setStatus(message) {
     if (mapStatus) {
@@ -80,6 +87,36 @@ function escapeHtml(value) {
 function getLandmarkName(id) {
     const landmark = allLandmarks.find((item) => item.id === id);
     return landmark?.name || id;
+}
+
+function isFavoriteLandmark(id) {
+    return favoriteIds.has(id);
+}
+
+function isAdminUser() {
+    return currentUser?.role === "admin";
+}
+
+function ensureLoggedIn(actionText = "执行此操作") {
+    if (currentUser) {
+        return true;
+    }
+    openAuthModal("login");
+    showToast(`${actionText}需要先登录`, "info");
+    setStatus(`${actionText}需要先登录`);
+    return false;
+}
+
+function ensureAdmin(actionText = "执行此操作") {
+    if (!ensureLoggedIn(actionText)) {
+        return false;
+    }
+    if (!isAdminUser()) {
+        showToast(`${actionText}需要管理员权限`, "error");
+        setStatus(`${actionText}需要管理员权限`);
+        return false;
+    }
+    return true;
 }
 
 function getLandmarkPosition(landmark) {
@@ -187,6 +224,9 @@ function buildInfoContent(landmark) {
             <p><strong>经纬度：</strong><span class="coordinate-text">${escapeHtml(coordinateText)}</span></p>
             <p>${escapeHtml(landmark.description || "暂无描述")}</p>
             <div class="info-actions">
+                <button type="button" class="info-favorite-btn ${isFavoriteLandmark(landmark.id) ? "is-favorite" : ""}" data-id="${escapeHtml(landmark.id)}">
+                    ${isFavoriteLandmark(landmark.id) ? "取消收藏" : "收藏地标"}
+                </button>
                 <button type="button" class="info-edit-btn" data-id="${escapeHtml(landmark.id)}">编辑此地标</button>
                 <button type="button" class="info-copy-btn" data-id="${escapeHtml(landmark.id)}">复制坐标</button>
                 <button type="button" class="info-delete-btn danger" data-id="${escapeHtml(landmark.id)}">删除此地标</button>
@@ -295,15 +335,18 @@ function renderLandmarkList(landmarks) {
         const distanceText = landmark.distance !== undefined && landmark.distance !== null
             ? `<p class="distance">距离搜索中心：${escapeHtml(landmark.distance)} ${escapeHtml(landmark.unit || "")}</p>`
             : "";
+        const favoriteText = isFavoriteLandmark(landmark.id) ? '<span class="favorite-badge">已收藏</span>' : "";
 
         card.innerHTML = `
             <span class="card-main">
                 <strong>${escapeHtml(landmark.name)}</strong>
                 <span class="tag">${escapeHtml(landmark.category || "未分类")}</span>
+                ${favoriteText}
                 <p class="address">${escapeHtml(landmark.address || "暂无地址")}</p>
                 ${distanceText}
             </span>
             <span class="card-actions">
+                <span class="favorite-btn ${isFavoriteLandmark(landmark.id) ? "is-favorite" : ""}" role="button" tabindex="0" data-id="${escapeHtml(landmark.id)}">${isFavoriteLandmark(landmark.id) ? "取消" : "收藏"}</span>
                 <span class="edit-btn" role="button" tabindex="0" data-id="${escapeHtml(landmark.id)}">编辑</span>
                 <span class="delete-btn" role="button" tabindex="0" data-id="${escapeHtml(landmark.id)}">删除</span>
             </span>
@@ -317,6 +360,14 @@ function renderLandmarkList(landmarks) {
         card.querySelector(".delete-btn").addEventListener("click", (event) => {
             event.stopPropagation();
             deleteLandmark(landmark);
+        });
+        card.querySelector(".favorite-btn").addEventListener("click", (event) => {
+            event.stopPropagation();
+            toggleFavoriteLandmark(landmark).catch((error) => {
+                console.error(error);
+                setStatus(error.message);
+                showToast(error.message, "error");
+            });
         });
         landmarkList.appendChild(card);
     });
@@ -369,18 +420,19 @@ function applyListFilters() {
     const category = categoryFilter.value;
     const keyword = String(keywordSearch.value || "").trim().toLowerCase();
     visibleLandmarks = allLandmarks.filter((landmark) => {
+        const matchesFavorite = !showingFavoritesOnly || favoriteIds.has(landmark.id);
         const matchesCategory = !category || (landmark.category || "未分类") === category;
         const searchableText = [landmark.name, landmark.category, landmark.address]
             .map((value) => String(value || "").toLowerCase())
             .join(" ");
         const matchesKeyword = !keyword || searchableText.includes(keyword);
-        return matchesCategory && matchesKeyword;
+        return matchesFavorite && matchesCategory && matchesKeyword;
     });
 
     renderMarkers(visibleLandmarks);
     renderLandmarkList(visibleLandmarks);
     fitLandmarks(visibleLandmarks);
-    const filterText = [category ? `分类「${category}」` : "", keyword ? `关键词「${keywordSearch.value.trim()}」` : ""]
+    const filterText = [showingFavoritesOnly ? "我的收藏" : "", category ? `分类「${category}」` : "", keyword ? `关键词「${keywordSearch.value.trim()}」` : ""]
         .filter(Boolean)
         .join("、");
     setStatus(filterText ? `已筛选 ${visibleLandmarks.length} 个地标：${filterText}` : `已显示全部 ${visibleLandmarks.length} 个地标`);
@@ -408,14 +460,56 @@ function updateAuthUI() {
 
     if (currentUser) {
         const displayName = currentUser.nickname || currentUser.username;
-        authEntryText.textContent = `你好，${displayName}`;
+        const roleText = isAdminUser() ? "管理员" : "用户";
+        authEntryText.textContent = `你好，${roleText} ${displayName}`;
         openAuthModalBtn.classList.add("is-logged-in");
         logoutBtn.classList.remove("hidden");
+        favoriteFilterBtn.disabled = false;
     } else {
         authEntryText.textContent = "登录 / 注册";
         openAuthModalBtn.classList.remove("is-logged-in");
         logoutBtn.classList.add("hidden");
+        favoriteIds = new Set();
+        showingFavoritesOnly = false;
+        favoriteFilterBtn.disabled = true;
     }
+    favoriteFilterBtn.classList.toggle("is-active", showingFavoritesOnly);
+    favoriteFilterBtn.textContent = showingFavoritesOnly ? "查看全部地标" : "只看我的收藏";
+}
+
+async function loadStats() {
+    const response = await fetch("/api/stats");
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+        throw new Error(result.message || `读取统计数据失败：${response.status}`);
+    }
+
+    const stats = result.data || {};
+    statLandmarkCount.textContent = stats.landmark_count ?? "--";
+    statCategoryCount.textContent = stats.category_count ?? "--";
+    statUserCount.textContent = stats.user_count ?? "--";
+    statRedisStatus.textContent = stats.redis_ok ? "正常" : "异常";
+    statRedisStatus.classList.toggle("is-ok", Boolean(stats.redis_ok));
+    statRedisStatus.classList.toggle("is-error", !stats.redis_ok);
+}
+
+async function loadFavorites() {
+    if (!currentUser) {
+        favoriteIds = new Set();
+        return favoriteIds;
+    }
+
+    const response = await fetch("/api/users/me/favorites");
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+        throw new Error(result.message || `读取收藏失败：${response.status}`);
+    }
+
+    favoriteIds = new Set(result.ids || []);
+    updateAuthUI();
+    return favoriteIds;
 }
 
 async function loadCurrentUser() {
@@ -483,9 +577,45 @@ async function loadLandmarks(focusId = "") {
     }
 
     setStatus(`已加载 ${allLandmarks.length} 个成都景点 Marker`);
+    loadStats().catch((error) => console.error(error));
+}
+
+async function toggleFavoriteLandmark(landmark) {
+    if (!currentUser) {
+        openAuthModal("login");
+        throw new Error("请先登录后再收藏地标");
+    }
+
+    const isFavorite = isFavoriteLandmark(landmark.id);
+    const response = await fetch(`/api/users/me/favorites/${encodeURIComponent(landmark.id)}`, {
+        method: isFavorite ? "DELETE" : "POST",
+    });
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+        throw new Error(result.message || `收藏操作失败：${response.status}`);
+    }
+
+    favoriteIds = new Set(result.ids || []);
+    if (showingFavoritesOnly && isFavorite) {
+        applyListFilters();
+    } else {
+        renderLandmarkList(visibleLandmarks);
+        if (selectedLandmarkId === landmark.id) {
+            openLandmarkInfo(landmark);
+        }
+        updateMarkerState();
+    }
+    updateAuthUI();
+    showToast(result.message || (isFavorite ? "已取消收藏" : "已加入收藏"), "success");
+    setStatus(`${landmark.name}：${result.message || "收藏状态已更新"}`);
 }
 
 async function resetSeedData() {
+    if (!ensureAdmin("恢复示例数据")) {
+        return;
+    }
+
     if (!window.confirm("恢复示例数据会清空当前所有地标，并恢复 12 个成都示例地标。确定继续吗？")) {
         return;
     }
@@ -550,6 +680,11 @@ function readFileAsText(file) {
 
 async function importLandmarksFromFile(file) {
     if (!file) {
+        return;
+    }
+
+    if (!ensureAdmin("导入 JSON")) {
+        importJsonInput.value = "";
         return;
     }
 
@@ -761,6 +896,8 @@ async function handleLoginSubmit(event) {
     closeAuthModal();
     updateAuthUI();
     await loadCurrentUser();
+    await loadFavorites();
+    renderLandmarkList(visibleLandmarks);
     setStatus(`用户「${currentUser?.nickname || currentUser?.username || payload.username}」已登录`);
     showToast(result.message || "登录成功", "success");
 }
@@ -777,12 +914,17 @@ async function handleLogout() {
 
     currentUser = null;
     updateAuthUI();
+    applyListFilters();
     setStatus("当前用户已退出登录");
     showToast(result.message || "已退出登录", "success");
 }
 
 async function handleAddLandmarkSubmit(event) {
     event.preventDefault();
+
+    if (!ensureLoggedIn(editingLandmarkId ? "编辑地标" : "新增地标")) {
+        return;
+    }
 
     const formData = new FormData(addLandmarkForm);
     const rawPayload = Object.fromEntries(formData.entries());
@@ -812,6 +954,10 @@ async function handleAddLandmarkSubmit(event) {
 }
 
 async function deleteLandmark(landmark) {
+    if (!ensureAdmin("删除地标")) {
+        return;
+    }
+
     if (!window.confirm(`确定删除「${landmark.name}」吗？`)) {
         return;
     }
@@ -875,6 +1021,7 @@ function fillFormCoordinates(position) {
 
 function bindEvents() {
     resetViewBtn.addEventListener("click", () => {
+        showingFavoritesOnly = false;
         categoryFilter.value = "";
         keywordSearch.value = "";
         distanceResult.textContent = "请选择两个地标计算距离";
@@ -887,6 +1034,18 @@ function bindEvents() {
         fitLandmarks(visibleLandmarks);
         setStatus(`已重置视图，显示 ${visibleLandmarks.length} 个地标`);
         showToast("视图已重置", "info");
+    });
+
+    favoriteFilterBtn.addEventListener("click", () => {
+        if (!currentUser) {
+            openAuthModal("login");
+            showToast("请先登录后再查看收藏", "info");
+            return;
+        }
+
+        showingFavoritesOnly = !showingFavoritesOnly;
+        updateAuthUI();
+        applyListFilters();
     });
 
     categoryFilter.addEventListener("change", applyCategoryFilter);
@@ -997,10 +1156,11 @@ function bindEvents() {
     });
 
     document.addEventListener("click", (event) => {
+        const favoriteButton = event.target.closest(".info-favorite-btn");
         const editButton = event.target.closest(".info-edit-btn");
         const copyButton = event.target.closest(".info-copy-btn");
         const deleteButton = event.target.closest(".info-delete-btn");
-        const actionButton = editButton || copyButton || deleteButton;
+        const actionButton = favoriteButton || editButton || copyButton || deleteButton;
 
         if (!actionButton) {
             return;
@@ -1012,7 +1172,13 @@ function bindEvents() {
             return;
         }
 
-        if (editButton) {
+        if (favoriteButton) {
+            toggleFavoriteLandmark(landmark).catch((error) => {
+                console.error(error);
+                setStatus(error.message);
+                showToast(error.message, "error");
+            });
+        } else if (editButton) {
             startEditLandmark(landmark);
         } else if (copyButton) {
             copyLandmarkCoordinates(landmark).catch((error) => {
@@ -1053,6 +1219,8 @@ function initMap() {
         console.error(error);
         currentUser = null;
         updateAuthUI();
+    }).then(() => {
+        loadFavorites().then(() => renderLandmarkList(visibleLandmarks)).catch((error) => console.error(error));
     });
     loadLandmarks().catch((error) => {
         console.error(error);

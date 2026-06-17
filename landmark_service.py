@@ -148,6 +148,21 @@ def export_landmarks() -> list[dict[str, Any]]:
     return list_landmarks()
 
 
+def get_landmark_stats() -> dict[str, Any]:
+    """统计地标总量和分类分布，供看板展示。"""
+    landmarks = list_landmarks()
+    category_distribution: dict[str, int] = {}
+    for landmark in landmarks:
+        category = str(landmark.get("category") or "未分类")
+        category_distribution[category] = category_distribution.get(category, 0) + 1
+
+    return {
+        "landmark_count": len(landmarks),
+        "category_count": len(category_distribution),
+        "category_distribution": dict(sorted(category_distribution.items())),
+    }
+
+
 def import_landmarks(landmarks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """整体导入地标数据：先完成全部校验，再清空并写入 Redis。"""
     if not isinstance(landmarks, list):

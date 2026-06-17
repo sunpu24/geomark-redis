@@ -41,6 +41,27 @@
                             <button id="resetViewBtn" type="button" class="ghost-btn">重置</button>
                         </div>
 
+                        <div id="statsBoard" class="stats-board" aria-label="数据统计看板">
+                            <div class="stat-item">
+                                <span>地标总数</span>
+                                <strong id="statLandmarkCount">--</strong>
+                            </div>
+                            <div class="stat-item">
+                                <span>分类数量</span>
+                                <strong id="statCategoryCount">--</strong>
+                            </div>
+                            <div class="stat-item">
+                                <span>用户数量</span>
+                                <strong id="statUserCount">--</strong>
+                            </div>
+                            <div class="stat-item">
+                                <span>Redis</span>
+                                <strong id="statRedisStatus">--</strong>
+                            </div>
+                        </div>
+
+                        <button id="favoriteFilterBtn" type="button" class="favorite-filter-btn">只看我的收藏</button>
+
                         <label class="field-label" for="categoryFilter">分类筛选</label>
                         <select id="categoryFilter">
                             <option value="">全部分类</option>

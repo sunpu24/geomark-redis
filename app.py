@@ -9,6 +9,7 @@ from landmark_service import (
     export_landmarks,
     get_distance,
     get_landmark,
+    get_landmark_stats,
     import_landmarks,
     list_landmarks,
     search_nearby,
@@ -16,7 +17,15 @@ from landmark_service import (
 )
 from redis_client import redis_client
 from seed_data import reset_seed_data
-from user_service import get_user, list_users, register_user, verify_user_password
+from user_service import (
+    add_favorite_landmark,
+    get_user,
+    list_favorite_landmark_ids,
+    list_users,
+    register_user,
+    remove_favorite_landmark,
+    verify_user_password,
+)
 
 
 app = Flask(__name__)
@@ -33,6 +42,44 @@ def success(data=None, **extra):
 
 def error(message: str, status_code: int = 400):
     return jsonify({"success": False, "message": message}), status_code
+
+
+def current_username() -> str | None:
+    return session.get("username")
+
+
+def current_user() -> dict | None:
+    username = current_username()
+    if not username:
+        return None
+    user = get_user(username)
+    if not user:
+        session.pop("username", None)
+        return None
+    return user
+
+
+def require_login() -> str | None:
+    user = current_user()
+    if not user:
+        return None
+    return user["username"]
+
+
+def require_login_response():
+    user = current_user()
+    if not user:
+        return None, error("请先登录后再操作", 401)
+    return user, None
+
+
+def require_admin_response():
+    user, response = require_login_response()
+    if response:
+        return None, response
+    if user.get("role") != "admin":
+        return None, error("需要管理员权限", 403)
+    return user, None
 
 
 @app.get("/")
@@ -108,6 +155,12 @@ def api_get_current_user():
 
 @app.get("/api/users/<username>")
 def api_get_user(username):
+    current, response = require_login_response()
+    if response:
+        return response
+    if current["username"] != username and current.get("role") != "admin":
+        return error("只能查看自己的用户信息", 403)
+
     user = get_user(username)
     if not user:
         return error("用户不存在", 404)
@@ -116,8 +169,62 @@ def api_get_user(username):
 
 @app.get("/api/users")
 def api_list_users():
+    _, response = require_admin_response()
+    if response:
+        return response
+
     users = list_users()
     return success(data=users, count=len(users))
+
+
+@app.get("/api/stats")
+def api_get_stats():
+    try:
+        redis_ok = bool(redis_client.ping())
+    except Exception:
+        redis_ok = False
+
+    stats = get_landmark_stats()
+    stats.update(
+        user_count=len(list_users()),
+        redis_ok=redis_ok,
+        generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    )
+    return success(data=stats)
+
+
+@app.get("/api/users/me/favorites")
+def api_list_my_favorites():
+    username = require_login()
+    if not username:
+        return error("请先登录后再查看收藏", 401)
+
+    favorite_ids = list_favorite_landmark_ids(username)
+    landmarks = [get_landmark(landmark_id) for landmark_id in favorite_ids]
+    landmarks = [landmark for landmark in landmarks if landmark]
+    return success(data=landmarks, ids=favorite_ids, count=len(landmarks))
+
+
+@app.post("/api/users/me/favorites/<landmark_id>")
+def api_add_my_favorite(landmark_id):
+    username = require_login()
+    if not username:
+        return error("请先登录后再收藏地标", 401)
+    if not get_landmark(landmark_id):
+        return error("地标不存在", 404)
+
+    favorite_ids = add_favorite_landmark(username, landmark_id)
+    return success(ids=favorite_ids, message="已加入收藏")
+
+
+@app.delete("/api/users/me/favorites/<landmark_id>")
+def api_remove_my_favorite(landmark_id):
+    username = require_login()
+    if not username:
+        return error("请先登录后再取消收藏", 401)
+
+    favorite_ids = remove_favorite_landmark(username, landmark_id)
+    return success(ids=favorite_ids, message="已取消收藏")
 
 
 @app.get("/api/landmarks")
@@ -187,6 +294,10 @@ def api_get_landmark(landmark_id):
 
 @app.post("/api/landmarks")
 def api_add_landmark():
+    _, response = require_login_response()
+    if response:
+        return response
+
     data = request.get_json(silent=True) or {}
     try:
         landmark = add_landmark(data)
@@ -200,6 +311,10 @@ def api_add_landmark():
 
 @app.post("/api/landmarks/reset-seed")
 def api_reset_seed_data():
+    _, response = require_admin_response()
+    if response:
+        return response
+
     try:
         landmarks = reset_seed_data()
     except Exception as exc:
@@ -214,6 +329,10 @@ def api_reset_seed_data():
 
 @app.post("/api/landmarks/import")
 def api_import_landmarks():
+    _, response = require_admin_response()
+    if response:
+        return response
+
     payload = request.get_json(silent=True)
     if payload is None:
         return error("请提交合法的 JSON 数据")
@@ -231,6 +350,10 @@ def api_import_landmarks():
 
 @app.put("/api/landmarks/<landmark_id>")
 def api_update_landmark(landmark_id):
+    _, response = require_login_response()
+    if response:
+        return response
+
     data = request.get_json(silent=True) or {}
     try:
         landmark = update_landmark(landmark_id, data)
@@ -246,6 +369,10 @@ def api_update_landmark(landmark_id):
 
 @app.delete("/api/landmarks/<landmark_id>")
 def api_delete_landmark(landmark_id):
+    _, response = require_admin_response()
+    if response:
+        return response
+
     deleted = delete_landmark(landmark_id)
     if not deleted:
         return error("地标不存在", 404)

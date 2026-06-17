@@ -1,3 +1,4 @@
+import os
 import re
 from datetime import datetime
 from typing import Any
@@ -9,17 +10,38 @@ from redis_client import redis_client
 
 USER_IDS_KEY = "user:ids"
 USER_DETAIL_KEY_PREFIX = "user:detail:"
+USER_FAVORITES_KEY_PREFIX = "user:favorites:"
 USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _admin_usernames() -> set[str]:
+    """从环境变量读取管理员用户名列表，逗号分隔。"""
+    return {
+        username.strip()
+        for username in os.getenv("ADMIN_USERNAMES", "admin").split(",")
+        if username.strip()
+    }
+
+
+def is_admin_username(username: str) -> bool:
+    """判断用户名是否被配置为管理员。"""
+    return str(username or "").strip() in _admin_usernames()
 
 
 def _user_detail_key(username: str) -> str:
     return f"{USER_DETAIL_KEY_PREFIX}{username}"
 
 
+def _user_favorites_key(username: str) -> str:
+    return f"{USER_FAVORITES_KEY_PREFIX}{username}"
+
+
 def _safe_user(data: dict[str, Any]) -> dict[str, Any]:
     """返回用户公开信息，避免暴露 password_hash。"""
     user = dict(data)
     user.pop("password_hash", None)
+    username = str(user.get("username") or "").strip()
+    user["role"] = "admin" if is_admin_username(username) else str(user.get("role") or "user")
     return user
 
 
@@ -60,6 +82,7 @@ def register_user(data: dict[str, Any]) -> dict[str, Any]:
         "password_hash": generate_password_hash(password),
         "nickname": nickname,
         "email": email,
+        "role": "admin" if is_admin_username(username) else "user",
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -112,6 +135,34 @@ def list_users() -> list[dict[str, Any]]:
     return users
 
 
+def list_favorite_landmark_ids(username: str) -> list[str]:
+    """查询用户收藏的地标 ID，按 ID 排序返回。"""
+    username = validate_username(username)
+    return sorted(redis_client.smembers(_user_favorites_key(username)))
+
+
+def add_favorite_landmark(username: str, landmark_id: str) -> list[str]:
+    """为用户添加收藏地标，返回最新收藏 ID 列表。"""
+    username = validate_username(username)
+    landmark_id = str(landmark_id or "").strip()
+    if not landmark_id:
+        raise ValueError("地标 ID 不能为空")
+
+    redis_client.sadd(_user_favorites_key(username), landmark_id)
+    return list_favorite_landmark_ids(username)
+
+
+def remove_favorite_landmark(username: str, landmark_id: str) -> list[str]:
+    """取消用户收藏地标，返回最新收藏 ID 列表。"""
+    username = validate_username(username)
+    landmark_id = str(landmark_id or "").strip()
+    if not landmark_id:
+        raise ValueError("地标 ID 不能为空")
+
+    redis_client.srem(_user_favorites_key(username), landmark_id)
+    return list_favorite_landmark_ids(username)
+
+
 def delete_test_user(username: str) -> None:
     """删除指定测试用户，仅供自动化测试清理使用，不暴露为 API。"""
     username = str(username or "").strip()
@@ -121,4 +172,5 @@ def delete_test_user(username: str) -> None:
     pipe = redis_client.pipeline()
     pipe.srem(USER_IDS_KEY, username)
     pipe.delete(_user_detail_key(username))
+    pipe.delete(_user_favorites_key(username))
     pipe.execute()
